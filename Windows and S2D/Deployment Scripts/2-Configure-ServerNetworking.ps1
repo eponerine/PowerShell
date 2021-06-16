@@ -1,4 +1,12 @@
-﻿#################################################
+﻿param (
+    [Parameter(Mandatory)]
+    [string]$ServerName,
+    
+    [Parameter(Mandatory)]
+    [string]$ServerConfigJSONPath
+)
+
+#################################################
 #region SCRIPT CONFIGURATION AND GLOBAL VARIABLES
 
 # TODO: Change the .Json files to hold all cluster node info in an array.
@@ -6,8 +14,8 @@
 #       parameters to be passed to it, specifically what node we want to configure.
 
 # Load config file and specify which node we want to configure
-$serverNameToConfigure = "S2D-NODE-XX"
-$serverConfigJSONFile = "C:\XXXXXX\clusterConfig.json"
+$serverNameToConfigure = $ServerName
+$serverConfigJSONFile = $ServerConfigJSONPath
 $serverConfigJSONData = Get-Content -Path $serverConfigJSONFile | ConvertFrom-Json
 
 # Get that specific node's data
@@ -15,26 +23,26 @@ $clusterData = $serverConfigJSONData.clusterData
 $serverData = $serverConfigJSONData.serverData | ? serverName -Like $serverNameToConfigure
 
 # Cluster and server specific
-$domainName       = $clusterData.domainName
-$domainOU         = $clusterData.domainOU
-$interfaceDesc    = $clusterData.interfaceDescription
-$interfaceName    = $clusterData.interfaceName
-$switchName       = $clusterData.embeddedSwitchName
-$serverName       = $serverData.serverName
-$mgmtName         = $clusterData.mgmtName
-$mgmtIP           = $serverData.mgmtIP
-$mgmtSubnet       = $clusterData.mgmtSubnet
-$mgmtVLAN         = $clusterData.mgmtVLAN
-$mgmtGW           = $serverData.mgmtGateway
-$mgmtDNS1         = $serverData.mgmtDNS1
-$mgmtDNS2         = $serverData.mgmtDNS2
-$storageName      = $clusterData.storageName
-$storageIP1       = $serverData.storageIP1
-$storageIP2       = $serverData.storageIP2
-$storageIP3       = $serverData.storageIP3
-$storageIP4       = $serverData.storageIP4
-$storageSubnet    = $clusterData.storageSubnet
-$storageVLAN      = $clusterData.storageVLAN
+$domainName                      = $clusterData.domainName
+$domainOU                        = $clusterData.domainOU
+$interfaceDesc                   = $clusterData.interfaceDescription
+$interfaceName                   = $clusterData.interfaceName
+$switchName                      = $clusterData.embeddedSwitchName
+$serverName                      = $serverData.serverName
+$mgmtName                        = $clusterData.mgmtName
+$mgmtIP                          = $serverData.mgmtIP
+$mgmtSubnet                      = $clusterData.mgmtSubnet
+$mgmtVLAN                        = $clusterData.mgmtVLAN
+$mgmtGW                          = $serverData.mgmtGateway
+$mgmtDNS1                        = $serverData.mgmtDNS1
+$mgmtDNS2                        = $serverData.mgmtDNS2
+$storageName                     = $clusterData.storageName
+$storageIPs                      = $serverData.storageIPs
+$storageSubnet                   = $clusterData.storageSubnet
+$storageVLAN                     = $clusterData.storageVLAN
+$SDNEnabled                      = $clusterData.SDNEnabled
+$SDNNcHostAgentDnsProxyServiceIP = $clusterData.SDNNcHostAgentDnsProxyServiceIP
+$SDNDNSProxyForwarders           = $clusterData.SDNDNSProxyForwarders
 
 # Global variables
 $serverOSBuild = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\' -Name CurrentBuildNumber
@@ -45,6 +53,7 @@ $serverOSBuild = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows N
 #region DISABLE TEMPORARY IP ADDRESS
 
 Write-Host "Resetting temporary MGMT interface IP address back to default settings" -ForegroundColor Cyan
+
 $tempInterface = Get-NetIPAddress | ? IPAddress -EQ $mgmtIP | Get-NetAdapter
 $tempInterface | Remove-NetIPAddress -Confirm:$false
 $tempInterface | Remove-NetRoute -Confirm:$false
@@ -60,12 +69,11 @@ $tempInterface | Set-NetIPInterface -Dhcp Enabled
 # Create the SET Switch and add all the available pNIC's to it. Don't create the default vNIC, we'll do that later
 Write-Host "Creating SET Switch and adding all pNICs" -ForegroundColor Cyan
 
-$interfaceNames = Get-NetAdapter -Name "*$interfaceName*" | Select -ExpandProperty Name
-New-VMSwitch -Name $switchName -NetAdapterName $interfaceNames -EnableEmbeddedTeaming $true -MinimumBandwidthMode None -AllowManagementOS $false | Out-Null
+$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*"
+New-VMSwitch -Name $switchName -NetAdapterName $physicalInterfaces.Name -EnableEmbeddedTeaming $true -MinimumBandwidthMode Weight -AllowManagementOS $false | Out-Null
 
 # Set SET Switch load balancing algorithm to HyperVPort if it's 2016. Anything newer than 2016 has this on by default
 If ($serverOSBuild -eq 14393) {
-
     Write-Host " - Setting Load Balance Algorithm to HyperVPort (you're probably running 2016)" -ForegroundColor Yellow
     Set-VMSwitchTeam -Name $switchName -LoadBalancingAlgorithm HyperVPort
 }
@@ -82,17 +90,13 @@ Write-Host " - Adding Management vNIC" -ForegroundColor Yellow
 Add-VMNetworkAdapter -SwitchName $switchName -Name $mgmtName -ManagementOS
 Set-VMNetworkAdapterVlan -VMNetworkAdapterName $mgmtName -VlanId $mgmtVLAN -Access -ManagementOS
 
-# Create SMB vNIC's and configure network settings
-# TODO: The number of interfaces should be programatic instead of static. For now, we assume there are always 4 pNIC and thus 4 vNIC
-Write-Host " - Adding Storage vNICs" -ForegroundColor Yellow
-Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName 1" -ManagementOS
-Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName 2" -ManagementOS
-Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName 3" -ManagementOS
-Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName 4" -ManagementOS
-Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName 1" -VlanId $storageVLAN -Access -ManagementOS
-Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName 2" -VlanId $storageVLAN -Access -ManagementOS
-Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName 3" -VlanId $storageVLAN -Access -ManagementOS
-Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName 4" -VlanId $storageVLAN -Access -ManagementOS
+# Create Storage vNIC's and configure their network settings
+# The number of vNIC's is determined by the total number of pNICs we added to the SET Switch above
+Write-Host " - Adding $($physicalInterfaces.count) Storage vNICs" -ForegroundColor Yellow
+For ($i = 1; $i -le $physicalInterfaces.count; $i++) {
+    Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName $i" -ManagementOS
+    Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName $i" -VlanId $storageVLAN -Access -ManagementOS
+}
 
 # Restart vNIC's to make sure VLAN tags are in effect
 Write-Host " - Restarting all vNICs and sleeping for 5 seconds" -ForegroundColor Yellow
@@ -130,14 +134,15 @@ $managementNIC | Enable-NetAdapterRdma
 Write-Host "Configure Storage vNICs" -ForegroundColor Cyan
 
 # Get all Storage interfaces
-$storageNICs = Get-NetAdapter | ? Name -Like "*$storageName*"
+$storageVNICs = Get-NetAdapter | ? Name -Like "*$storageName*"
 
-# Individually set their IP settings
+# Individually set each Storage vNIC IP setting
+# TODO: Build in some logic to make sure the number of IPs in the JSON array matches the number of storage vNICs we're configuring, otherwise we'll get an Array OOB
 Write-Host " - Set Management vNIC IP settings" -ForegroundColor Yellow
-$storageNICs[0] | New-NetIPAddress -IPAddress $storageIP1 -PrefixLength $storageSubnet | Out-Null
-$storageNICs[1] | New-NetIPAddress -IPAddress $storageIP2 -PrefixLength $storageSubnet | Out-Null
-$storageNICs[2] | New-NetIPAddress -IPAddress $storageIP3 -PrefixLength $storageSubnet | Out-Null
-$storageNICs[3] | New-NetIPAddress -IPAddress $storageIP4 -PrefixLength $storageSubnet | Out-Null
+For ($i = 0; $i -lt $storageVNICs.count; $i++) {
+    Write-Host " - Configuring Storage vNIC $i - $($storageIPs[$i])" -ForegroundColor Yellow
+    $storageVNICs[$i] | New-NetIPAddress -IPAddress $storageIPs[$i] -PrefixLength $storageSubnet | Out-Null
+}
 
 Write-Host " - Sleeping for 5 seconds and clearing DNS cache" -ForegroundColor Yellow
 Start-Sleep 5
@@ -145,7 +150,7 @@ Clear-DnsClientCache
 
 # Enable RDMA on vNICs
 Write-Host " - Enable RDMA on SMB vNICs" -ForegroundColor Yellow
-$storageNICs | Enable-NetAdapterRdma
+$storageVNICs | Enable-NetAdapterRdma
 
 # TODO: Set vNIC to pNIC affinity
 #Set-VMNetworkAdapterTeamMapping
@@ -199,6 +204,13 @@ Write-Host " - Set minimum bandwidth for Default (39%), SMB Direct (60%), and Cl
 New-NetQosTrafficClass "SMB"              -Priority 3 -BandwidthPercentage 60 -Algorithm ETS
 New-NetQosTrafficClass "ClusterHeartbeat" -Priority 7 -BandwidthPercentage 1 -Algorithm ETS
 
+# Configure Live Migration SMB Bandwidth Limit
+Write-Host " - Configure Live Migration SMB Bandwidth Limit to 40% of total bandwidth" -ForegroundColor Yellow
+$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*"
+$bytesPerSecond = ($physicalInterfaces | Select TransmitLinkSpeed | Measure-Object -Sum TransmitLinkSpeed).Sum / 8
+Write-Host " - Total Bytes/Sec: $bytesPerSecond" -ForegroundColor Yellow
+Set-SmbBandwidthLimit -Category LiveMigration -BytesPerSecond ($bytesPerSecond*0.4)
+
 # Disable traditional Flow Control on the Storage pNICs
 Write-Host " - Disable traditional Flow Control on pNICs" -ForegroundColor Yellow
 Set-NetAdapterAdvancedProperty -Name "*$interfaceName*" -RegistryKeyword "*FlowControl" -RegistryValue 0
@@ -206,6 +218,29 @@ Write-Host " - Sleeping for 10 seconds..." -ForegroundColor Yellow
 Start-Sleep -Seconds 10
 
 #endregion
+
+#########################
+#region SDN CONFIGURATION
+
+# Configure iDNS Settings on SDN host
+If ($SDNEnabled) {
+    Write-Host "Configuring SDN settings" -ForegroundColor Cyan
+    
+    Write-Host " - Configuring NcHostAgent DnsProxyService settings: $($SDNNcHostAgentDnsProxyServiceIP)" -ForegroundColor Yellow
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet" -name "InfraServices" -Force | out-null
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet\InfraServices" -name "DnsProxyService" -Force | out-null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet\InfraServices\DnsProxyService" -Name "Port" -Value 53 -PropertyType "Dword" -Force | out-null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet\InfraServices\DnsProxyService" -Name "ProxyPort" -Value 53 -PropertyType "Dword" -Force | out-null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet\InfraServices\DnsProxyService" -Name "IP" -Value $SDNNcHostAgentDnsProxyServiceIP -PropertyType "String" -Force | out-null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NcHostAgent\Parameters\Plugins\Vnet\InfraServices\DnsProxyService" -Name "MAC" -Value "AA-BB-CC-AA-BB-CC" -PropertyType "String" -Force | out-null
+
+    Write-Host " - Configuring DnsProxy settings: $($SDNNcHostAgentDnsProxyServiceIP)" -ForegroundColor Yellow
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services" -name "DnsProxy" -Force | out-null
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services\DnsProxy" -name "Parameters" -Force | out-null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\DNSProxy\Parameters" -Name "Forwarders" -Value $SDNDNSProxyForwarders -PropertyType "String" -Force | out-null
+    
+    Restart-Service NcHostAgent -Force
+}
 
 #################################
 #region MISC SERVER CONFIGURATION

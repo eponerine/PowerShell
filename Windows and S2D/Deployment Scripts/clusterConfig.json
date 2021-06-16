@@ -1,68 +1,44 @@
 {
-	"clusterData": {
-		"clusterName": 			"S2D-CLUSTER-A",
-		"clusterIP": 			"172.20.64.100",
-		"domainName": 			"devlab.contoso.com",
-		"domainOU": 			"OU=Hyper-V Servers,DC=devlab,DC=contoso,DC=com",
-        "timeZoneName":         "Eastern Standard Time",
-		"mgmtName": 			"Management",
-		"mgmtNetwork": 			"172.20.64.0",
-		"mgmtSubnet": 			"24",
-		"mgmtVLAN": 			"164",
-		"storageName":    		"SMB",
-		"storageNetwork":       "10.12.0.0",
-		"storageSubnet":        "16",
-		"storageVLAN":          "12",
-		"quorumSharePath":      "",
-        "quorumCloudAcctName":  "azCloudWitnessAccountName",
-        "quorumCloudKey":       "azCloudWitnessKey==",
-		"interfaceDescription": "Mellanox ConnectX-3 Pro Ethernet Adapter",
-		"interfaceName": 		"Converged",
-		"embeddedSwitchName": 	"SET Switch"
-	},
-	"serverData": [{
-		"serverName":  "S2D-NODE-01",
+    "clusterData": {
+        "clusterName":                     "ASHCI-CLUST-A",
+        "clusterIP":                       "172.20.69.70",
+        "domainName":                      "devlab.contoso.com",
+        "domainOU":                        "OU=Hyper-V Servers,DC=devlab,DC=contoso,DC=com",
+        "timeZoneName":                    "Eastern Standard Time",
+        "mgmtName":                        "Management",
+        "mgmtNetwork":                     "172.20.69.0",
+        "mgmtSubnet":                      "24",
+        "mgmtVLAN":                        "69",
+        "storageName":                     "SMB",
+        "storageNetwork":                  "10.112.0.0",
+        "storageSubnet":                   "16",
+        "storageVLAN":                     "112",
+        "quorumSharePath":                 "",
+        "quorumCloudAcctName":             "azCloudWitnessAccountName",
+        "quorumCloudKey":                  "azCloudWitnessKeyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==",
+        "interfaceDescription":            "Mellanox ConnectX-4 Lx Ethernet Adapter",
+        "interfaceName":                   "HCI Converged",
+        "embeddedSwitchName":              "SET SWITCH",
+        "switchBandwidthMode":             "Weight",
+        "SDNEnabled":                      false,
+        "SDNNcHostAgentDnsProxyServiceIP": "169.254.169.254",
+        "SDNDNSProxyForwarders":           "172.20.69.41,172.20.69.42"
+    },
+    "serverData": [{
+        "serverName":  "ASHCI-NODE-01",
         "productKey":  "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-		"mgmtIP": 	   "172.20.64.101",
-		"mgmtGateway": "172.20.64.1",
-		"mgmtDNS1":    "172.20.64.11",
-		"mgmtDNS2":	   "172.20.64.12",
-		"storageIP1":  "10.12.1.101",
-		"storageIP2":  "10.12.2.101",
-		"storageIP3":  "10.12.3.101",
-		"storageIP4":  "10.12.4.101"
-	}, {
-		"serverName":  "S2D-NODE-02",
+        "mgmtIP":      "172.20.69.71",
+        "mgmtGateway": "172.20.69.1",
+        "mgmtDNS1":    "172.20.69.11",
+        "mgmtDNS2":    "172.20.69.12",
+        "storageIPs":  ["10.112.71.1","10.112.71.2"]
+    }, {
+        "serverName":  "ASHCI-NODE-01",
         "productKey":  "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-		"mgmtIP":      "172.20.64.102",
-		"mgmtGateway": "172.20.64.1",
-		"mgmtDNS1":    "172.20.64.11",
-		"mgmtDNS2":    "172.20.64.12",
-		"storageIP1":  "10.12.1.102",
-		"storageIP2":  "10.12.2.102",
-		"storageIP3":  "10.12.3.102",
-		"storageIP4":  "10.12.4.102"
-	}, {
-		"serverName":  "S2D-NODE-03",
-        "productKey":  "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-		"mgmtIP":      "172.20.64.103",
-		"mgmtGateway": "172.20.64.1",
-		"mgmtDNS1":    "172.20.64.11",
-		"mgmtDNS2":    "172.20.64.12",
-		"storageIP1":  "10.12.1.103",
-		"storageIP2":  "10.12.2.103",
-		"storageIP3":  "10.12.3.103",
-		"storageIP4":  "10.12.4.103"
-	}, {
-		"serverName":  "S2D-NODE-04",
-        "productKey":  "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-		"mgmtIP":      "172.20.64.104",
-		"mgmtGateway": "172.20.64.1",
-		"mgmtDNS1":    "172.20.64.11",
-		"mgmtDNS2":    "172.20.64.12",
-		"storageIP1":  "10.12.1.104",
-		"storageIP2":  "10.12.2.104",
-		"storageIP3":  "10.12.3.104",
-		"storageIP4":  "10.12.4.104"
-	}]
+        "mgmtIP":      "172.20.69.72",
+        "mgmtGateway": "172.20.69.1",
+        "mgmtDNS1":    "172.20.69.11",
+        "mgmtDNS2":    "172.20.69.12",
+        "storageIPs":  ["10.112.72.1","10.112.72.2"]
+    }]
 }
