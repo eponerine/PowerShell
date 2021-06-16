@@ -1,3 +1,8 @@
+param (
+    [Parameter(Mandatory)]
+    [string]$ServerConfigJsonPath
+)
+
 #################################################
 #region SCRIPT CONFIGURATION AND GLOBAL VARIABLES
 
@@ -6,7 +11,7 @@
 #       parameters to be passed to it, specifically what node we want to configure.
 
 # Load config file
-$serverConfigJSONFile = "C:\XXXXXX\clusterConfig.json"
+$serverConfigJSONFile = $ServerConfigJSONPath
 $serverConfigJSONData = Get-Content -Path $serverConfigJSONFile | ConvertFrom-Json
 
 # Get that specific node's data
