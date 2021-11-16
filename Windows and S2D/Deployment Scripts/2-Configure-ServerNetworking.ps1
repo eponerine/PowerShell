@@ -270,6 +270,9 @@ $pagefile.InitialSize = 102400
 $pagefile.MaximumSize = 102400
 $pagefile.Put() | Out-Null
 
+# Configure Power Policy to High Performance
+powercfg.exe /S "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+
 # Configure Intel NVMe/SSD hardware hack for timeouts. Second part of this hack is configured after S2D is configured.
 Write-Host " - Configure NVMe and SSD hardware timeout hack for Intel drives" -ForegroundColor Yellow
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\spaceport\Parameters" -Name "HwTimeout" -Value 16000
