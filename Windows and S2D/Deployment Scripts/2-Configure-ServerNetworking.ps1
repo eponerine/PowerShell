@@ -67,9 +67,15 @@ $tempInterface | Set-NetIPInterface -Dhcp Enabled
 #region CREATE AND CONFIGURE SET (SWITCH EMBEDDED TEAMING)
 
 # Create the SET Switch and add all the available pNIC's to it. Don't create the default vNIC, we'll do that later
-Write-Host "Creating SET Switch and adding all pNICs" -ForegroundColor Cyan
+Write-Host "Creating SET Switch and adding all pNICs with Status = UP" -ForegroundColor Cyan
 
-$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*"
+$physicalInterfacesAll = Get-NetAdapter -Name "*$interfaceName*"
+$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*" | ? Status -like "*up*"
+
+If ($physicalInterfacesAll -ne $physicalInterfaces) {
+    Write-Host " - There was a mismatch between ALL pNIC and UP pNIC... make sure you have everything plugged in or manually go add to SET Switch later" -ForegroundColor Yellow
+}
+
 New-VMSwitch -Name $switchName -NetAdapterName $physicalInterfaces.Name -EnableEmbeddedTeaming $true -MinimumBandwidthMode Weight -AllowManagementOS $false | Out-Null
 
 # Set SET Switch load balancing algorithm to HyperVPort if it's 2016. Anything newer than 2016 has this on by default
@@ -206,7 +212,7 @@ New-NetQosTrafficClass "ClusterHeartbeat" -Priority 7 -BandwidthPercentage 1 -Al
 
 # Configure Live Migration SMB Bandwidth Limit
 Write-Host " - Configure Live Migration SMB Bandwidth Limit to 40% of total bandwidth" -ForegroundColor Yellow
-$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*"
+$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*" | ? Status -like "*up*"
 $bytesPerSecond = ($physicalInterfaces | Select TransmitLinkSpeed | Measure-Object -Sum TransmitLinkSpeed).Sum / 8
 Write-Host " - Total Bytes/Sec: $bytesPerSecond" -ForegroundColor Yellow
 Set-SmbBandwidthLimit -Category LiveMigration -BytesPerSecond ($bytesPerSecond*0.4)
