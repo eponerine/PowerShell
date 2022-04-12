@@ -202,8 +202,8 @@ Write-Host " - Configure Priority Flow Control (PFC)" -ForegroundColor Yellow
 Enable-NetQosFlowControl -Priority 3
 Disable-NetQosFlowControl -Priority 0,1,2,4,5,6,7
 
-Write-Host " - Apply QoS policy to all pNICs" -ForegroundColor Yellow
-Get-NetAdapterQos | Enable-NetAdapterQos | Out-Null
+Write-Host " - Apply QoS policy to all pNICs (but not LOM, OOB, DRAC, etc)" -ForegroundColor Yellow
+Get-NetAdapterQos | ? Name -like "*$interfaceName*" | Enable-NetAdapterQos | Out-Null
 
 # Configure DCB minimum bandwidth (Default = 39%, SMB Direct = 60%, Cluster Heartbeat = 1%)
 Write-Host " - Set minimum bandwidth for Default (39%), SMB Direct (60%), and Cluster Heartbeat (1%)" -ForegroundColor Yellow
