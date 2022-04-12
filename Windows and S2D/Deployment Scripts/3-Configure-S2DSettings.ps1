@@ -30,6 +30,7 @@ $clusterNodes               = $serverData.serverName
 $mgmtName                   = $clusterData.mgmtName
 $mgmtNetwork                = $clusterData.mgmtNetwork
 $storageNetwork             = $clusterData.storageNetwork
+$storageSubnet              = $clusterData.storageSubnet
 $storageName                = $clusterData.storageName
 
 #endregion
@@ -41,7 +42,8 @@ Write-Host "Configure new cluster" -ForegroundColor Cyan
 
 # Create the new cluster and sleep for 5 seconds after creation
 Write-Host " - Create cluster" -ForegroundColor Yellow
-New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -Verbose
+$storageNetworkCIDR = "$storageNetwork/$storageSubnet"
+New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -IgnoreNetwork $storageNetworkCIDR -Verbose
 Start-Sleep 5
 Clear-DnsClientCache
 
@@ -58,8 +60,9 @@ Else {
 # Rename Management Cluster Network
 (Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$mgmtNetwork*").Name = "Cluster Network - $mgmtName"
 
-# Rename Storage Cluster Network
+# Rename Storage Cluster Network and set type correctly
 (Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$storageNetwork*").Name = "Cluster Network - $storageName"
+(Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$storageNetwork*").Role = "Cluster"
 
 #endregion
 
