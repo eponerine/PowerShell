@@ -1,4 +1,4 @@
-﻿param (
+param (
     [Parameter(Mandatory)]
     [string]$ServerName,
     
@@ -36,6 +36,7 @@ $mgmtVLAN         = $clusterData.mgmtVLAN
 $mgmtGW           = $serverData.mgmtGateway
 $mgmtDNS1         = $serverData.mgmtDNS1
 $mgmtDNS2         = $serverData.mgmtDNS2
+$netATCEnabled    = $clusterData.netATCEnabled
 $SDNEnabled       = $clusterData.SDNEnabled
 
 # Global variables
@@ -48,29 +49,58 @@ $serverOSBuild = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows N
 
 # Check if the required S2D Features and Roles are already installed, skip if they are
 # TODO: Change this to Get-WindowsFeature
-Write-Host "Checking if Hyper-V, FCM, DCB, and Deduplication Features are installed" -ForegroundColor Cyan
-Install-WindowsFeature -Name Hyper-V -IncludeManagementTools
-Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools
-Install-WindowsFeature -Name Data-Center-Bridging -IncludeManagementTools
-Install-WindowsFeature -Name FS-Data-Deduplication -IncludeManagementTools
-Install-WindowsFeature -Name FS-SMBBW -IncludeManagementTools
+Write-Host "Installing roles like Hyper-V, FCM, DCB, Deduplication, etc..." -ForegroundColor Cyan
+#Install-WindowsFeature -Name Hyper-V -IncludeManagementTools
+#Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools
+#Install-WindowsFeature -Name Data-Center-Bridging -IncludeManagementTools
+#Install-WindowsFeature -Name FS-Data-Deduplication -IncludeManagementTools
+#Install-WindowsFeature -Name FS-SMBBW -IncludeManagementTools
+Install-WindowsFeature -Name "BitLocker", "Data-Center-Bridging", "Failover-Clustering", "FS-FileServer", "FS-Data-Deduplication", "Hyper-V", "Hyper-V-PowerShell", "RSAT-AD-Powershell", "RSAT-Clustering-PowerShell", "FS-SMBBW", "Storage-Replica" -IncludeAllSubFeature -IncludeManagementTools
 If ($SDNEnabled) { Install-WindowsFeature -Name NetworkVirtualization -IncludeManagementTools }
+If ($netATCEnabled) { Install-WindowsFeatures -Name "NetworkATC", "NetworkHUD" -IncludeManagementTools -IncludeAllSubFeature }
 
 #endregion
+
+############################
+#region NIC RENAME
+$allNIC = Get-NetAdapter | ? InterfaceDescription -Like "*$interfaceDesc*"
+
+Write-Host "Found $($allNIC.count) interfaces that match description $interfaceDesc" -ForegroundColor Cyan
+$allNIC | Sort ifIndex |FT Name, InterfaceDescription, ifIndex, Status
+
+$interfaceGroupCount = Read-Host -Prompt "How many interface groups (vSwitch) are you creating"
+Write-Host "-----------------------------"
+
+
+For ($i = 1; $i -le $interfaceGroupCount; $i++) {
+    
+    # Loop thru and rename the interfaces
+    $currentInterfaceGroupName = Read-Host -Prompt "Interface Group $i Prefix"
+    $groupMemberInterfaceIndexes = Read-Host -Prompt "Interfaces to add to vSwitch $currentInterfaceGroupName (separate with commas)"
+    $groupMemberInterfaceArray = $groupMemberInterfaceIndexes.split(',')
+    
+    $groupMemberInterfaces = Get-NetAdapter -ifIndex $groupMemberInterfaceArray
+    
+    ForEach ($n in $groupMemberInterfaces) {
+        $tempName = "$currentInterfaceGroupName - $($n.Name)"
+        $n | Rename-NetAdapter -NewName $tempName
+    }
+    Write-Host "-----------------------------"
+}
 
 ############################
 #region CONVERGED NIC RENAME
 
 # Grab the specified pNICs and rename them.
 # If the word "converged" is already in the display name, skip it as this portion of the script was most likely already ran.
-Write-Host "Renaming Converged pNIC's" -ForegroundColor Cyan
-$convergedNIC = Get-NetAdapter | ? InterfaceDescription -Like "*$interfaceDesc*" | ? Name -NotLike "*Converged*"
+#Write-Host "Renaming Converged pNIC's" -ForegroundColor Cyan
+#$convergedNIC = Get-NetAdapter | ? InterfaceDescription -Like "*$interfaceDesc*" | ? Name -NotLike "*Converged*"
 
-ForEach ($n in $convergedNIC) {
-    # Set the interface's name and increment the counter
-    $tempName = "$interfaceName - $($n.Name)"
-    $n | Rename-NetAdapter -NewName $tempName
-}
+#ForEach ($n in $convergedNIC) {
+#    # Set the interface's name and increment the counter
+#    $tempName = "$interfaceName - $($n.Name)"
+#    $n | Rename-NetAdapter -NewName $tempName
+#}
 
 #endregion
 
@@ -79,7 +109,10 @@ ForEach ($n in $convergedNIC) {
 
 # Grab one of the pNICs that is Status UP
 Write-Host "Configure MGMT IP temporarily on a single pNIC" -ForegroundColor Cyan
-$tempMgmtNIC = Get-NetAdapter | ? InterfaceDescription -Like "*$interfaceDesc*" | ? Status -like "*Up*" | Select -First 1
+$tempMgmtNICIndex = Read-Host -Prompt "Which interface index do you want to configure as temporary MGMT"
+$tempMgmtNIC = Get-NetAdapter -ifIndex $tempMgmtNICIndex
+
+#$tempMgmtNIC = Get-NetAdapter | ? InterfaceDescription -Like "*$interfaceDesc*" | ? Status -like "*Up*" | Select -First 1
 
 If ($tempMgmtNIC) {
     # Set the pNIC IPv4 address to temporary MGMT IP and MGMT VLAN

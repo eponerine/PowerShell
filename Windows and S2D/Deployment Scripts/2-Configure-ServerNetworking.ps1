@@ -1,4 +1,4 @@
-﻿param (
+param (
     [Parameter(Mandatory)]
     [string]$ServerName,
     
@@ -25,8 +25,13 @@ $serverData = $serverConfigJSONData.serverData | ? serverName -Like $serverNameT
 # Cluster and server specific
 $domainName                      = $clusterData.domainName
 $domainOU                        = $clusterData.domainOU
+$pageFileSizeBytes               = $clusterData.pageFileSizeBytes
 $interfaceDesc                   = $clusterData.interfaceDescription
 $interfaceName                   = $clusterData.interfaceName
+
+#$interfaces                      = $clusterData.interfaces
+$embeddedSwitches                = $clusterData.embeddedSwitches
+
 $switchName                      = $clusterData.embeddedSwitchName
 $serverName                      = $serverData.serverName
 $mgmtName                        = $clusterData.mgmtName
@@ -40,6 +45,8 @@ $storageName                     = $clusterData.storageName
 $storageIPs                      = $serverData.storageIPs
 $storageSubnet                   = $clusterData.storageSubnet
 $storageVLAN                     = $clusterData.storageVLAN
+$netATCEnabled                   = $clusterData.netATCEnabled
+$SDNEnabled                      = $clusterData.SDNEnabled
 $SDNEnabled                      = $clusterData.SDNEnabled
 $SDNNcHostAgentDnsProxyServiceIP = $clusterData.SDNNcHostAgentDnsProxyServiceIP
 $SDNDNSProxyForwarders           = $clusterData.SDNDNSProxyForwarders
@@ -64,57 +71,32 @@ $tempInterface | Set-NetIPInterface -Dhcp Enabled
 #endregion
 
 ##########################################################
-#region CREATE AND CONFIGURE SET (SWITCH EMBEDDED TEAMING)
+#region CREATE AND CONFIGURE SET VM SWITCHES (SWITCH EMBEDDED TEAMING)
 
-# Create the SET Switch and add all the available pNIC's to it. Don't create the default vNIC, we'll do that later
-Write-Host "Creating SET Switch and adding all pNICs with Status = UP" -ForegroundColor Cyan
+# Create the SET Switch and add the correct pNIC's to it. Don't create Management OS vNICs; we'll do that later
+Write-Host "Creating SET Switch and adding all pNICs with matching name prefix" -ForegroundColor Cyan
 
-$physicalInterfacesAll = Get-NetAdapter -Name "*$interfaceName*"
-$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*" | ? Status -like "*up*"
-
-If ($physicalInterfacesAll -ne $physicalInterfaces) {
-    Write-Host " - There was a mismatch between ALL pNIC and UP pNIC... make sure you have everything plugged in or manually go add to SET Switch later" -ForegroundColor Yellow
-}
-
-New-VMSwitch -Name $switchName -NetAdapterName $physicalInterfaces.Name -EnableEmbeddedTeaming $true -MinimumBandwidthMode Weight -AllowManagementOS $false | Out-Null
-
-# Set SET Switch load balancing algorithm to HyperVPort if it's 2016. Anything newer than 2016 has this on by default
-If ($serverOSBuild -eq 14393) {
-    Write-Host " - Setting Load Balance Algorithm to HyperVPort (you're probably running 2016)" -ForegroundColor Yellow
-    Set-VMSwitchTeam -Name $switchName -LoadBalancingAlgorithm HyperVPort
+ForEach ($v in $embeddedSwitches) {
+    Write-Host "Configuring SET Switch - $($v.name)" -ForegroundColor Cyan
+    $interfacesToAdd = Get-NetAdapter | ? Name -like "*$($v.memberNamePrefix)*"
+    Write-Host " - Adding following interfaces:"
+    $interfacesToAdd
+    New-VMSwitch -Name $v.name -AllowManagementOS $false -EnableEmbeddedTeaming $true -EnableIov $true -NetAdapterInterfaceDescription $interfacesToAdd.InterfaceDescription | Out-Null
 }
 
 #endregion
 
 ##############################################
-#region CONFIGURE MANAGEMENT AND STORAGE vNICs
+#region CONFIGURE MANAGEMENT vNICs
 
 Write-Host "Configuring vNICs" -ForegroundColor Cyan
 
 # Create Management vNIC and configure network settings
 Write-Host " - Adding Management vNIC" -ForegroundColor Yellow
-Add-VMNetworkAdapter -SwitchName $switchName -Name $mgmtName -ManagementOS
+$targetSwitch = $embeddedSwitches | ? isMgmt -like $true
+
+Add-VMNetworkAdapter -SwitchName $targetSwitch.name -Name $mgmtName -ManagementOS
 Set-VMNetworkAdapterVlan -VMNetworkAdapterName $mgmtName -VlanId $mgmtVLAN -Access -ManagementOS
-
-# Create Storage vNIC's and configure their network settings
-# The number of vNIC's is determined by the total number of pNICs we added to the SET Switch above
-Write-Host " - Adding $($physicalInterfaces.count) Storage vNICs" -ForegroundColor Yellow
-For ($i = 1; $i -le $physicalInterfaces.count; $i++) {
-    Add-VMNetworkAdapter -SwitchName $switchName -Name "$storageName $i" -ManagementOS
-    Set-VMNetworkAdapterVlan -VMNetworkAdapterName "$storageName $i" -VlanId $storageVLAN -Access -ManagementOS
-}
-
-# Restart vNIC's to make sure VLAN tags are in effect
-Write-Host " - Restarting all vNICs and sleeping for 5 seconds" -ForegroundColor Yellow
-Restart-NetAdapter -Name "*vEthernet*"
-Start-Sleep 5
-
-#endregion
-
-#########################
-#region CONFIGURE MGMT IP
-
-Write-Host "Configure Management vNIC" -ForegroundColor Cyan
 
 # Get Management interface
 $managementNIC = Get-NetAdapter | ? Name -Like "*$mgmtName*"
@@ -134,29 +116,50 @@ $managementNIC | Enable-NetAdapterRdma
 
 #endregion
 
-################################
-#region CONFIGURE STORAGE NIC IP
+##############################################
+#region CONFIGURE SMB vNICs
 
-Write-Host "Configure Storage vNICs" -ForegroundColor Cyan
+$targetSwitch = $embeddedSwitches | ? isStorage -like $true
 
-# Get all Storage interfaces
-$storageVNICs = Get-NetAdapter | ? Name -Like "*$storageName*"
-
-# Individually set each Storage vNIC IP setting
-# TODO: Build in some logic to make sure the number of IPs in the JSON array matches the number of storage vNICs we're configuring, otherwise we'll get an Array OOB
-Write-Host " - Set Management vNIC IP settings" -ForegroundColor Yellow
-For ($i = 0; $i -lt $storageVNICs.count; $i++) {
-    Write-Host " - Configuring Storage vNIC $i - $($storageIPs[$i])" -ForegroundColor Yellow
-    $storageVNICs[$i] | New-NetIPAddress -IPAddress $storageIPs[$i] -PrefixLength $storageSubnet | Out-Null
+# We may have multiple vSwitches need separate SMB interfaces configured (on diff VLANs)
+ForEach ($s in $targetSwitch) {
+    # Get the pNICs bound to that vSwitch and use the count to determine how many vNICs to create
+    Write-Host " - Configuring vSwitch $($s.name)" -ForegroundColor Yellow
+    $tempCurrentSwitch = Get-VMSwitch -Name $s.Name
+    
+    For ($i = 1; $i -le $tempCurrentSwitch.NetAdapterInterfaceDescriptions.count; $i++) {
+        
+        $tempName = "$($s.storageName)-$($s.storageVLAN) $i"
+        Write-Host "   - Creating storage vNIC: $tempName" -ForegroundColor Magenta
+        Add-VMNetworkAdapter -SwitchName $s.name -Name $tempName -ManagementOS
+        Start-Sleep 5
+        $tempvNIC = Get-VMNetworkAdapter -Name $tempName -ManagementOS
+        Set-VMNetworkAdapterVlan -VMNetworkAdapterName $tempName -VlanId $s.storageVLAN -Access -ManagementOS
+        
+        # Build out the IP for storage vNICs
+        $mgmtIPArray = $mgmtIP.split('.')
+        $storageIPArray = $s.storageCIDR.split('.')
+        $storageIPArray[2] = $mgmtIPArray[3]
+        $storageIPArray[3] = $i
+        $tempStorageIP = ($storageIPArray -join '.')
+        
+        # Set the IP address
+        Write-Host "   - IP: $tempStorageIP"
+        Get-NetAdapter | ? Name -like "*$tempName*" | New-NetIPAddress -IPAddress $tempStorageIP -PrefixLength $s.storageSubnet | Out-Null
+        
+        #Enable RDMA
+        Write-Host "   - Enable RDMA"
+        Get-NetAdapter | ? Name -like "*$tempName*" | Enable-NetAdapterRdma
+                
+        # Disable DNS registration on all Storage NICs
+        Write-Host "   - Disable DNS registration"
+        Get-NetAdapter | ? Name -like "*$tempName*" | Set-DNSClient -RegisterThisConnectionsAddress $False
+    }
 }
 
 Write-Host " - Sleeping for 5 seconds and clearing DNS cache" -ForegroundColor Yellow
 Start-Sleep 5
 Clear-DnsClientCache
-
-# Enable RDMA on vNICs
-Write-Host " - Enable RDMA on SMB vNICs" -ForegroundColor Yellow
-$storageVNICs | Enable-NetAdapterRdma
 
 # TODO: Set vNIC to pNIC affinity
 #Set-VMNetworkAdapterTeamMapping
@@ -194,32 +197,32 @@ Set-NetQosDcbxSetting -Willing $false -Confirm:$False
 
 # Create QoS policies for SMB Direct and Cluster Heartbeat
 Write-Host " - Create QoS policy for SMB Direct and Cluster Heartbeat" -ForegroundColor Yellow
-New-NetQosPolicy "Default"          -Default                         -PriorityValue8021Action 0
-New-NetQosPolicy "SMB"              -NetDirectPortMatchCondition 445 -PriorityValue8021Action 3
-New-NetQosPolicy "ClusterHeartbeat" -Cluster                         -PriorityValue8021Action 7
+New-NetQosPolicy "Default"          -Default                         -PriorityValue8021Action 0 | Out-Null
+New-NetQosPolicy "SMB"              -NetDirectPortMatchCondition 445 -PriorityValue8021Action 3 | Out-Null
+New-NetQosPolicy "ClusterHeartbeat" -Cluster                         -PriorityValue8021Action 7 | Out-Null
 
 Write-Host " - Configure Priority Flow Control (PFC)" -ForegroundColor Yellow
 Enable-NetQosFlowControl -Priority 3
 Disable-NetQosFlowControl -Priority 0,1,2,4,5,6,7
 
 Write-Host " - Apply QoS policy to all pNICs (but not LOM, OOB, DRAC, etc)" -ForegroundColor Yellow
-Get-NetAdapterQos | ? Name -like "*$interfaceName*" | Enable-NetAdapterQos | Out-Null
+Get-NetAdapter | ? InterfaceDescription -like "*$interfaceDesc*" | Get-NetAdapterQos | Enable-NetAdapterQos | Out-Null
 
-# Configure DCB minimum bandwidth (Default = 39%, SMB Direct = 60%, Cluster Heartbeat = 1%)
+# Configure DCB minimum bandwidth (Default = 49%, SMB Direct = 50%, Cluster Heartbeat = 1%)
 Write-Host " - Set minimum bandwidth for Default (39%), SMB Direct (60%), and Cluster Heartbeat (1%)" -ForegroundColor Yellow
-New-NetQosTrafficClass "SMB"              -Priority 3 -BandwidthPercentage 60 -Algorithm ETS
-New-NetQosTrafficClass "ClusterHeartbeat" -Priority 7 -BandwidthPercentage 1 -Algorithm ETS
+New-NetQosTrafficClass "SMB"              -Priority 3 -BandwidthPercentage 50 -Algorithm ETS | Out-Null
+New-NetQosTrafficClass "ClusterHeartbeat" -Priority 7 -BandwidthPercentage 1 -Algorithm ETS | Out-Null
 
 # Configure Live Migration SMB Bandwidth Limit
 Write-Host " - Configure Live Migration SMB Bandwidth Limit to 40% of total bandwidth" -ForegroundColor Yellow
-$physicalInterfaces = Get-NetAdapter -Name "*$interfaceName*" | ? Status -like "*up*"
+$physicalInterfaces = Get-NetAdapter | ? InterfaceDescription -like "*$interfaceDesc*"
 $bytesPerSecond = ($physicalInterfaces | Select TransmitLinkSpeed | Measure-Object -Sum TransmitLinkSpeed).Sum / 8
-Write-Host " - Total Bytes/Sec: $bytesPerSecond" -ForegroundColor Yellow
+Write-Host "  - Total Bytes/Sec: $bytesPerSecond"
 Set-SmbBandwidthLimit -Category LiveMigration -BytesPerSecond ($bytesPerSecond*0.4)
 
 # Disable traditional Flow Control on the Storage pNICs
 Write-Host " - Disable traditional Flow Control on pNICs" -ForegroundColor Yellow
-Set-NetAdapterAdvancedProperty -Name "*$interfaceName*" -RegistryKeyword "*FlowControl" -RegistryValue 0
+Get-NetAdapter | ? InterfaceDescription -like "*$interfaceDesc*" | Set-NetAdapterAdvancedProperty -RegistryKeyword "*FlowControl" -RegistryValue 0
 Write-Host " - Sleeping for 10 seconds..." -ForegroundColor Yellow
 Start-Sleep -Seconds 10
 
@@ -253,14 +256,6 @@ If ($SDNEnabled) {
 
 Write-Host "Configuring misc settings" -ForegroundColor Cyan
 
-# Disable DNS registration on all Storage NICs
-Write-Host " - Disable DNS registration on all Storage NICs" -ForegroundColor Yellow
-Set-DNSClient -InterfaceAlias "*$storageName*" -RegisterThisConnectionsAddress $False
-
-# Configure Hyper-V live migration settings
-Write-Host " - Configure Hyper-V live migration to use SMB and 6 simultanious transfers" -ForegroundColor Yellow
-Set-VMHost -VirtualMachineMigrationPerformanceOption SMB -MaximumVirtualMachineMigrations 6
-
 #Configure Active memory dump
 Write-Host " - Configure Active Memory Dump" -ForegroundColor Yellow
 Set-ItemProperty -Path HKLM:\System\CurrentControlSet\Control\CrashControl -Name CrashDumpEnabled -Value 1
@@ -272,8 +267,8 @@ $computersys = Get-WmiObject Win32_ComputerSystem -EnableAllPrivileges
 $computersys.AutomaticManagedPagefile = $False
 $computersys.Put() | Out-Null
 $pagefile = Get-WmiObject -Query "Select * From Win32_PageFileSetting Where Name like '%pagefile.sys'"
-$pagefile.InitialSize = 102400
-$pagefile.MaximumSize = 102400
+$pagefile.InitialSize = $pageFileSizeBytes
+$pagefile.MaximumSize = $pageFileSizeBytes
 $pagefile.Put() | Out-Null
 
 # Configure Power Policy to High Performance

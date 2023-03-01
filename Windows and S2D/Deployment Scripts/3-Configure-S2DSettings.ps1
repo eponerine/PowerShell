@@ -19,18 +19,26 @@ $clusterData = $serverConfigJSONData.clusterData
 $serverData = $serverConfigJSONData.serverData
 
 # Cluster and server specific
-$domainName                 = $clusterData.domainName
-$domainOU                   = $clusterData.domainOU
-$clusterName                = $clusterData.clusterName
-$clusterIP                  = $clusterData.clusterIP
-$clusterQuorumSharePath     = $clusterData.quorumSharePath
-$clusterQuorumCloudAcctName = $clusterData.quorumCloudAcctName
-$clusterQuorumCloudKey      = $clusterData.quorumCloudKey
-$clusterNodes               = $serverData.serverName
-$mgmtName                   = $clusterData.mgmtName
-$mgmtNetwork                = $clusterData.mgmtNetwork
-$storageNetwork             = $clusterData.storageNetwork
-$storageName                = $clusterData.storageName
+$domainName                    = $clusterData.domainName
+$domainOU                      = $clusterData.domainOU
+$clusterName                   = $clusterData.clusterName
+$clusterIP                     = $clusterData.clusterIP
+$clusterManagementPointType    = $clusterData.clusterManagementPointType
+$clusterAutoBalance            = $clusterData.clusterAutoBalance
+$clusterCSVCacheSize           = $clusterData.clusterCSVCacheSize
+$clusterLiveMigrationCount     = $clusterData.clusterLiveMigrationCount
+$clusterQuorumSharePath        = $clusterData.quorumSharePath
+$clusterQuorumCloudAcctName    = $clusterData.quorumCloudAcctName
+$clusterQuorumCloudKey         = $clusterData.quorumCloudKey
+$hciRegistrationTenantID       = $clusterData.hciRegistrationTenantID
+$hciRegistrationSubscriptionID = $clusterData.hciRegistrationSubscriptionID
+$hciRegistrationRGName         = $clusterData.hciRegistrationRGName
+$hciRegistrationRegion         = $clusterData.hciRegistrationRegion
+$clusterNodes                  = $serverData.serverName
+$mgmtName                      = $clusterData.mgmtName
+$mgmtNetwork                   = $clusterData.mgmtNetwork
+$storageName                   = $clusterData.storageName
+$embeddedSwitches              = $clusterData.embeddedSwitches
 
 #endregion
 
@@ -41,7 +49,12 @@ Write-Host "Configure new cluster" -ForegroundColor Cyan
 
 # Create the new cluster and sleep for 5 seconds after creation
 Write-Host " - Create cluster" -ForegroundColor Yellow
-New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -Verbose
+If ($clusterManagementPointType -eq "Distributed") {
+    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -ManagementPointNetworkType "Distributed" -Verbose
+}
+Else {
+    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -Verbose
+}
 Start-Sleep 5
 Clear-DnsClientCache
 
@@ -59,7 +72,9 @@ Else {
 (Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$mgmtNetwork*").Name = "Cluster Network - $mgmtName"
 
 # Rename Storage Cluster Network
-(Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$storageNetwork*").Name = "Cluster Network - $storageName"
+ForEach ($s in $embeddedSwitches) {
+    (Get-ClusterNetwork -Cluster $clusterName | ? Address -like $s.storageCIDR).Name = "Cluster Network - $($s.storageName)-$($s.storageVLAN)"
+}
 
 #endregion
 
@@ -116,21 +131,26 @@ Get-StorageSubSystem clus* | Set-StorageHealthSetting -Name "System.Storage.Phys
 
 # Enable Cluster Live Dump
 Write-Host " - Enable Cluster Live Dumps" -ForegroundColor Yellow
-(Get-Cluster).DumpPolicy=1118489
+(Get-Cluster).DumpPolicy = 1118489
 
 # Configure S2D Read Cache
-# TODO: Change this to a single CSV cache for PARENT-A volume
-#Write-Host " - Configure CSV in-memory read cache @ 8GB per node" -ForegroundColor Yellow
-#(Get-Cluster).BlockCacheSize = 16384
+Write-Host " - Configure CSV in-memory read cache" -ForegroundColor Yellow
+(Get-Cluster).BlockCacheSize = $clusterCSVCacheSize
+
+# Configure Live Migration count
+Write-Host " - Configure Live Migration count" -ForegroundColor Yellow
+(Get-Cluster).MaximumParallelMigrations = $clusterLiveMigrationCount
 
 # Configure Cluster IP to not use NetBIOS
 Write-Host " - Set Cluster IP to not use NetBIOS" -ForegroundColor Yellow
 Get-ClusterResource "Cluster IP address" | Set-ClusterParameter EnableNetBIOS 0
 
-# Set Cluster auto balancer to DISABLED
-Write-Host " - Set Cluster Auto Balance to DISABLED" -ForegroundColor Yellow
-(Get-Cluster).AutoBalancerMode = 0
-(Get-Cluster).AutoBalancerLevel = 3
+# Set Cluster auto balancer to DISABLED if requested
+If (!$clusterAutoBalance) {
+    Write-Host " - Set Cluster Auto Balance to DISABLED" -ForegroundColor Yellow
+    (Get-Cluster).AutoBalancerMode = 0
+    (Get-Cluster).AutoBalancerLevel = 3
+}
 
 # Set Cluster Core Resources to use their own RHS monitor process
 # Note that this change will require a resource node ownership
@@ -138,22 +158,47 @@ Write-Host " - Set Cluster Auto Balance to DISABLED" -ForegroundColor Yellow
 # TODO: makes sense to Get-ClusterResource by TYPE instead of NAME to prevent
 #       error if things were changed from default. 
 Write-Host " - Enable separate RHS monitor processes" -ForegroundColor Yellow
+Write-Host "   Some of these may fail as they may not be enabled on your cluster. That's ok!"
+(Get-ClusterResource -Name "Cloud Witness").SeparateMonitor               = 1
 (Get-ClusterResource -Name "Cluster IP Address").SeparateMonitor          = 1
 (Get-ClusterResource -Name "Cluster Name").SeparateMonitor                = 1
 (Get-ClusterResource -Name "Cluster Pool 1").SeparateMonitor              = 1
 (Get-ClusterResource -Name "File Share Witness").SeparateMonitor          = 1
-(Get-ClusterResource -Name "Cloud Witness").SeparateMonitor               = 1
 (Get-ClusterResource -Name "Health").SeparateMonitor                      = 1
 (Get-ClusterResource -Name "SDDC Management").SeparateMonitor             = 1
+(Get-ClusterResource -Name "Task Scheduler").SeparateMonitor              = 1
+(Get-ClusterResource -Name "User Manager").SeparateMonitor                = 1
 (Get-ClusterResource -Name "Storage Qos Resource").SeparateMonitor        = 1
 (Get-ClusterResource -Name "Virtual Machine Cluster WMI").SeparateMonitor = 1
 
 #endregion
 
+#####################################
+#region REGISTER AZURE STACK HCI
+$sku = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name ProductName).ProductName
+
+If ($sku -eq "Azure Stack HCI") {
+    Write-Host "Registering Azure Stack HCI... please log in with an account that has correct permissions" -ForegroundColor Cyan
+    Install-Module -Name Az.Accounts -Force
+    Install-Module -Name Az.StackHCI -Force
+
+    Connect-AzAccount -TenantId $hciRegistrationTenantID -SubscriptionId $hciRegistrationSubscriptionID -UseDeviceAuthentication
+
+    Write-Host "Connecting to Azure and sleeping 10 seconds..."
+    Start-Sleep 10
+
+    $armTokenItemResource = "https://management.core.windows.net/"
+    $azContext = Get-AzContext
+    $authFactory = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory
+    $armToken = $authFactory.Authenticate($azContext.Account, $azContext.Environment, $azContext.Tenant.Id, $null, [Microsoft.Azure.Commands.Common.Authentication.ShowDialog]::Never, $null, $armTokenItemResource).AccessToken
+    $id = $azContext.Account.Id
+
+    Register-AzStackHCI -Region $hciRegistrationRegion -SubscriptionID $hciRegistrationSubscriptionID -ResourceGroupName $hciRegistrationRGName -ArcServerResourceGroupName "$clusterName-Arc-Infra-RG" -ArmAccessToken $armToken -AccountId $id -ResourceName $clusterName
+}
+
 #####################
 #region END OF SCRIPT
 
 Write-Host "Configuration completed." -ForegroundColor Cyan
-Write-Host "Please make sure to add hosts to SCVMM (version 1807 and up) and convert SET switches to Logical Switches" -ForegroundColor Cyan
 
 #endregion
