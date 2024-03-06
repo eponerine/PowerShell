@@ -42,44 +42,10 @@ $embeddedSwitches              = $clusterData.embeddedSwitches
 
 #endregion
 
-####################################
-#region CREATE AND CONFIGURE CLUSTER
-
-Write-Host "Configure new cluster" -ForegroundColor Cyan
-
-# Create the new cluster and sleep for 5 seconds after creation
-Write-Host " - Create cluster" -ForegroundColor Yellow
-If ($clusterManagementPointType -eq "Distributed") {
-    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -ManagementPointNetworkType "Distributed" -Verbose
-}
-Else {
-    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -Verbose
-}
-Start-Sleep 5
-Clear-DnsClientCache
-
-# Set the quroum
-If ($clusterQuorumSharePath) {
-    Write-Host " - Set quorum witness to UNC share" -ForegroundColor Yellow
-    Set-ClusterQuorum -Cluster $clusterName -FileShareWitness $clusterQuorumSharePath
-} 
-Else {
-    Write-Host " - Set quorum witness to Azure Cloud Blob" -ForegroundColor Yellow
-    Set-ClusterQuorum -CloudWitness -AccountName $clusterQuorumCloudAcctName -AccessKey $clusterQuorumCloudKey
-}
-
-# Rename Management Cluster Network
-(Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$mgmtNetwork*").Name = "Cluster Network - $mgmtName"
-
-# Rename Storage Cluster Network
-ForEach ($s in $embeddedSwitches) {
-    (Get-ClusterNetwork -Cluster $clusterName | ? Address -like $s.storageCIDR).Name = "Cluster Network - $($s.storageName)-$($s.storageVLAN)"
-}
-
-#endregion
-
 #############################################
 #region INDIVIDUAL CLUSTER NODE CONFIGURATION
+
+Write-Host "Configure new cluster" -ForegroundColor Cyan
 
 Write-Host "Configuring cluster-specific settings on each node"
 ForEach ($n in $clusterNodes) {
@@ -115,6 +81,39 @@ ForEach ($n in $clusterNodes) {
 
 #endregion
 
+####################################
+#region CREATE AND CONFIGURE CLUSTER
+
+# Create the new cluster and sleep for 5 seconds after creation
+Write-Host " - Create cluster" -ForegroundColor Yellow
+If ($clusterManagementPointType -eq "Distributed") {
+    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -ManagementPointNetworkType "Distributed" -Verbose
+}
+Else {
+    New-Cluster -Name $clusterName -Node $clusterNodes -StaticAddress $clusterIP -Verbose
+}
+Start-Sleep 5
+Clear-DnsClientCache
+
+# Set the quroum
+If ($clusterQuorumSharePath) {
+    Write-Host " - Set quorum witness to UNC share" -ForegroundColor Yellow
+    Set-ClusterQuorum -Cluster $clusterName -FileShareWitness $clusterQuorumSharePath
+} 
+Else {
+    Write-Host " - Set quorum witness to Azure Cloud Blob" -ForegroundColor Yellow
+    Set-ClusterQuorum -CloudWitness -AccountName $clusterQuorumCloudAcctName -AccessKey $clusterQuorumCloudKey
+}
+
+# Rename Management Cluster Network
+(Get-ClusterNetwork -Cluster $clusterName | ? Address -Like "*$mgmtNetwork*").Name = "Cluster Network - $mgmtName"
+
+# Rename Storage Cluster Network
+ForEach ($s in $embeddedSwitches) {
+    (Get-ClusterNetwork -Cluster $clusterName | ? Address -like $s.storageCIDR).Name = "Cluster Network - $($s.storageName)-$($s.storageVLAN)"
+}
+
+#endregion
 
 #####################################
 #region S2D AND CLUSTER CONFIGURATION
